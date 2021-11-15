@@ -1,0 +1,23 @@
+[package]
+name = "dpms-off"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wayland-commons = "*"
+
+[dependencies.wayland-client]
+version = "*"
+features = ["use_system_lib"]
+
+[dependencies.wayland-protocols]
+version = "*"
+features = ["client", "unstable_protocols"]
+
+[build-dependencies]
+wayland-scanner = "*"
+
+[profile.release]
+lto = true

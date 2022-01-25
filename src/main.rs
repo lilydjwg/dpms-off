@@ -55,19 +55,16 @@ fn main() {
     panic!("Error: org_kde_kwin_idle not supported by the Wayland compositor.");
   }
 
-
   for o in &*outputs.borrow() {
     set_mode(manager.borrow().as_ref().unwrap(), o, Mode::Off);
   }
   let idle_timeout = idle.borrow().as_ref().unwrap().get_idle_timeout(seat.borrow().as_ref().unwrap(), 1000);
-  let outputs3 = outputs.clone();
-  let manager3 = manager.clone();
   let resumed = Rc::new(Cell::new(false));
   let resumed2 = resumed.clone();
   idle_timeout.quick_assign(move |_, event, _| {
     if let org_kde_kwin_idle_timeout::Event::Resumed = event {
-      for o in &*outputs3.borrow() {
-        set_mode(manager3.borrow().as_ref().unwrap(), o, Mode::On);
+      for o in &*outputs.borrow() {
+        set_mode(manager.borrow().as_ref().unwrap(), o, Mode::On);
       }
       resumed2.set(true);
     }

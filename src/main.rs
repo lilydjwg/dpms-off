@@ -48,6 +48,14 @@ fn main() {
 
   event_queue.sync_roundtrip(&mut (), |_, _, _| {}).unwrap();
 
+  if manager.borrow().is_none() {
+    panic!("Error: zwlr_output_power_manager_v1 not supported by the Wayland compositor.");
+  }
+  if idle.borrow().is_none() {
+    panic!("Error: org_kde_kwin_idle not supported by the Wayland compositor.");
+  }
+
+
   for o in &*outputs.borrow() {
     set_mode(manager.borrow().as_ref().unwrap(), o, Mode::Off);
   }

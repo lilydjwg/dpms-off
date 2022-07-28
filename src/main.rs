@@ -1,4 +1,5 @@
 use std::{rc::Rc, cell::{Cell, RefCell}};
+use std::time::{Instant, Duration};
 
 use wayland_client::{Display, GlobalManager, Main, global_filter};
 use wayland_client::protocol::{wl_output, wl_seat};
@@ -55,23 +56,40 @@ fn main() {
     panic!("Error: org_kde_kwin_idle not supported by the Wayland compositor.");
   }
 
+  let idle_timeout = idle.borrow().as_ref().unwrap().get_idle_timeout(seat.borrow().as_ref().unwrap(), 500);
+  let idle = Rc::new(Cell::new(false));
+  let idle2 = idle.clone();
+  let resumed = Rc::new(Cell::new(false));
+  let resumed2 = resumed.clone();
+  idle_timeout.quick_assign(move |_, event, _|
+    match event {
+      org_kde_kwin_idle_timeout::Event::Idle => {
+        idle2.set(true);
+      },
+      org_kde_kwin_idle_timeout::Event::Resumed => {
+        resumed2.set(true);
+      },
+    }
+  );
+
+  let start = Instant::now();
+  while !idle.get() {
+    event_queue.dispatch(&mut (), |_, _, _| { /* we ignore unfiltered messages */ }).unwrap();
+  }
+  if start.elapsed() > Duration::from_secs(1) {
+    // some program inhibits idle for some time, cancel our operation
+    return;
+  }
   for o in &*outputs.borrow() {
     set_mode(manager.borrow().as_ref().unwrap(), o, Mode::Off);
   }
-  let idle_timeout = idle.borrow().as_ref().unwrap().get_idle_timeout(seat.borrow().as_ref().unwrap(), 1000);
-  let resumed = Rc::new(Cell::new(false));
-  let resumed2 = resumed.clone();
-  idle_timeout.quick_assign(move |_, event, _| {
-    if let org_kde_kwin_idle_timeout::Event::Resumed = event {
-      for o in &*outputs.borrow() {
-        set_mode(manager.borrow().as_ref().unwrap(), o, Mode::On);
-      }
-      resumed2.set(true);
-    }
-  });
 
   while !resumed.get() {
     event_queue.dispatch(&mut (), |_, _, _| { /* we ignore unfiltered messages */ }).unwrap();
   }
+  for o in &*outputs.borrow() {
+    set_mode(manager.borrow().as_ref().unwrap(), o, Mode::On);
+  }
+
   event_queue.sync_roundtrip(&mut (), |_, _, _| {}).unwrap();
 }

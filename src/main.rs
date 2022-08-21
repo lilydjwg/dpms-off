@@ -1,10 +1,10 @@
 use std::{rc::Rc, cell::{Cell, RefCell}};
-use std::time::{Instant, Duration};
 
 use wayland_client::{Display, GlobalManager, Main, global_filter};
 use wayland_client::protocol::{wl_output, wl_seat};
 use wayland_protocols::wlr::unstable::output_power_management::v1::client::{zwlr_output_power_manager_v1, zwlr_output_power_v1::Mode};
 
+#[allow(clippy::all)]
 mod proto;
 
 use proto::idle::{org_kde_kwin_idle, org_kde_kwin_idle_timeout};
@@ -15,7 +15,21 @@ fn set_mode(m: &Main<zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1>, o:
   p.destroy();
 }
 
+use clap::Parser;
+
+#[derive(Parser)]
+#[clap(author, version, about, long_about = None)]
+struct Cli {
+  #[clap(long, value_name="N ms", default_value_t=500, help="milliseconds to wait for activity to stop before turning DPMS off")]
+  before: u32,
+}
+
 fn main() {
+  let cli = Cli::parse();
+  run(cli.before)
+}
+
+fn run(before: u32) {
   let display = Display::connect_to_env().unwrap();
   let mut event_queue = display.create_event_queue();
   let attached_display = (*display).clone().attach(event_queue.token());
@@ -56,7 +70,7 @@ fn main() {
     panic!("Error: org_kde_kwin_idle not supported by the Wayland compositor.");
   }
 
-  let idle_timeout = idle.borrow().as_ref().unwrap().get_idle_timeout(seat.borrow().as_ref().unwrap(), 500);
+  let idle_timeout = idle.borrow().as_ref().unwrap().get_idle_timeout(seat.borrow().as_ref().unwrap(), before);
   let idle = Rc::new(Cell::new(false));
   let idle2 = idle.clone();
   let resumed = Rc::new(Cell::new(false));
@@ -72,13 +86,8 @@ fn main() {
     }
   );
 
-  let start = Instant::now();
   while !idle.get() {
     event_queue.dispatch(&mut (), |_, _, _| { /* we ignore unfiltered messages */ }).unwrap();
-  }
-  if start.elapsed() > Duration::from_secs(1) {
-    // some program inhibits idle for some time, cancel our operation
-    return;
   }
   for o in &*outputs.borrow() {
     set_mode(manager.borrow().as_ref().unwrap(), o, Mode::Off);

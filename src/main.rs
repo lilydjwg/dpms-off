@@ -7,7 +7,7 @@ use wayland_protocols::wlr::unstable::output_power_management::v1::client::{zwlr
 #[allow(clippy::all)]
 mod proto;
 
-use proto::idle::{org_kde_kwin_idle, org_kde_kwin_idle_timeout};
+use proto::idle::{ext_idle_notifier_v1, ext_idle_notification_v1};
 
 fn set_mode(m: &Main<zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1>, o: &Main<wl_output::WlOutput>, mode: Mode) {
   let p = m.get_output_power(o);
@@ -55,7 +55,7 @@ fn run(before: u32) {
       [wl_seat::WlSeat, 7, move |s: Main<wl_seat::WlSeat>, _: DispatchData| {
         seat2.borrow_mut().replace(s);
       }],
-      [org_kde_kwin_idle::OrgKdeKwinIdle, 1, move |idle: Main<org_kde_kwin_idle::OrgKdeKwinIdle>, _: DispatchData| {
+      [ext_idle_notifier_v1::ExtIdleNotifierV1, 1, move |idle: Main<ext_idle_notifier_v1::ExtIdleNotifierV1>, _: DispatchData| {
         idle2.borrow_mut().replace(idle);
       }]
     )
@@ -67,20 +67,20 @@ fn run(before: u32) {
     panic!("Error: zwlr_output_power_manager_v1 not supported by the Wayland compositor.");
   }
   if idle.borrow().is_none() {
-    panic!("Error: org_kde_kwin_idle not supported by the Wayland compositor.");
+    panic!("Error: ext_idle_notifier_v1 not supported by the Wayland compositor.");
   }
 
-  let idle_timeout = idle.borrow().as_ref().unwrap().get_idle_timeout(seat.borrow().as_ref().unwrap(), before);
+  let idle_timeout = idle.borrow().as_ref().unwrap().get_idle_notification(before, seat.borrow().as_ref().unwrap(),);
   let idle = Rc::new(Cell::new(false));
   let idle2 = idle.clone();
   let resumed = Rc::new(Cell::new(false));
   let resumed2 = resumed.clone();
   idle_timeout.quick_assign(move |_, event, _|
     match event {
-      org_kde_kwin_idle_timeout::Event::Idle => {
+      ext_idle_notification_v1::Event::Idled => {
         idle2.set(true);
       },
-      org_kde_kwin_idle_timeout::Event::Resumed => {
+      ext_idle_notification_v1::Event::Resumed => {
         resumed2.set(true);
       },
     }

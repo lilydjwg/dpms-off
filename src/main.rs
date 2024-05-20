@@ -1,19 +1,7 @@
-use std::{rc::Rc, cell::{Cell, RefCell}};
-
-use wayland_client::{Display, GlobalManager, Main, global_filter};
-use wayland_client::protocol::{wl_output, wl_seat};
-use wayland_protocols::wlr::unstable::output_power_management::v1::client::{zwlr_output_power_manager_v1, zwlr_output_power_v1::Mode};
-
-#[allow(clippy::all)]
-mod proto;
-
-use proto::idle::{ext_idle_notifier_v1, ext_idle_notification_v1};
-
-fn set_mode(m: &Main<zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1>, o: &Main<wl_output::WlOutput>, mode: Mode) {
-  let p = m.get_output_power(o);
-  p.set_mode(mode);
-  p.destroy();
-}
+use wayland_client::{Connection, Dispatch, QueueHandle, Proxy, delegate_noop};
+use wayland_client::protocol::{wl_registry, wl_output, wl_seat};
+use wayland_protocols::ext::idle_notify::v1::client::{ext_idle_notifier_v1, ext_idle_notification_v1};
+use wayland_protocols_wlr::output_power_management::v1::client::{zwlr_output_power_manager_v1, zwlr_output_power_v1::{self, Mode}};
 
 use clap::Parser;
 
@@ -26,79 +14,112 @@ struct Cli {
 
 fn main() {
   let cli = Cli::parse();
-  run(cli.before)
+  run(cli.before);
+}
+
+#[derive(Default)]
+struct State {
+  outputs: Vec<wl_output::WlOutput>,
+  seat: Option<wl_seat::WlSeat>,
+  output_power_manager: Option<zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1>,
+  idle_notifier: Option<ext_idle_notifier_v1::ExtIdleNotifierV1>,
+  quit: bool,
+}
+
+impl Dispatch<wl_registry::WlRegistry, ()> for State {
+  fn event(
+    s: &mut Self,
+    registry: &wl_registry::WlRegistry,
+    event: wl_registry::Event,
+    _: &(),
+    _: &Connection,
+    qh: &QueueHandle<State>,
+  ) {
+    if let wl_registry::Event::Global { name, interface, .. } = event {
+      match &interface[..] {
+        "wl_output" => {
+          let output = registry.bind::<wl_output::WlOutput, _, _>(name, 2, qh, ());
+          s.outputs.push(output);
+        }
+        "wl_seat" => {
+          s.seat = Some(registry.bind::<wl_seat::WlSeat, _, _>(name, 7, qh, ()));
+        }
+        "zwlr_output_power_manager_v1" => {
+          s.output_power_manager =
+            Some(registry.bind::<zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1, _, _>(name, 1, qh, ()));
+        }
+        "ext_idle_notifier_v1" => {
+          s.idle_notifier =
+            Some(registry.bind::<ext_idle_notifier_v1::ExtIdleNotifierV1, _, _>(name, 1, qh, ()));
+        }
+        _ => {}
+      }
+    } else if let wl_registry::Event::GlobalRemove { name } = event {
+      s.outputs.retain(|o| o.id().protocol_id() != name);
+    }
+  }
+}
+
+delegate_noop!(State: ignore wl_seat::WlSeat);
+delegate_noop!(State: ignore wl_output::WlOutput);
+delegate_noop!(State: ext_idle_notifier_v1::ExtIdleNotifierV1);
+delegate_noop!(State: zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1);
+delegate_noop!(State: ignore zwlr_output_power_v1::ZwlrOutputPowerV1);
+
+impl Dispatch<ext_idle_notification_v1::ExtIdleNotificationV1, ()> for State {
+  fn event(
+    s: &mut Self,
+    _: &ext_idle_notification_v1::ExtIdleNotificationV1,
+    event: ext_idle_notification_v1::Event,
+    _: &(),
+    _: &Connection,
+    qh: &QueueHandle<Self>,
+  ) {
+    match event {
+      ext_idle_notification_v1::Event::Idled => {
+        s.set_mode(Mode::Off, qh);
+      },
+      ext_idle_notification_v1::Event::Resumed => {
+        s.set_mode(Mode::On, qh);
+        s.quit = true;
+      },
+      _ => {}
+    }
+  }
+}
+
+impl State {
+  fn set_mode(&self, mode: Mode, qh: &QueueHandle<Self>) {
+    let m = self.output_power_manager.as_ref().unwrap();
+    for o in &self.outputs {
+      let p = m.get_output_power(o, qh, ());
+      p.set_mode(mode);
+      p.destroy();
+    }
+  }
 }
 
 fn run(before: u32) {
-  let display = Display::connect_to_env().unwrap();
-  let mut event_queue = display.create_event_queue();
-  let attached_display = (*display).clone().attach(event_queue.token());
+  let conn = Connection::connect_to_env().unwrap();
+  let display = conn.display();
+  let mut event_queue = conn.new_event_queue();
+  let qh = event_queue.handle();
+  let _registry = display.get_registry(&qh, ());
+  let mut state = State::default();
 
-  let manager: Rc<RefCell<Option<Main<zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1>>>> = Rc::new(RefCell::new(None));
-  let manager2 = manager.clone();
-  let outputs = Rc::new(RefCell::new(Vec::new()));
-  let outputs2 = outputs.clone();
-  let seat = Rc::new(RefCell::new(None));
-  let seat2 = seat.clone();
-  let idle = Rc::new(RefCell::new(None));
-  let idle2 = idle.clone();
+  event_queue.roundtrip(&mut state).unwrap();
 
-  let _globals = GlobalManager::new_with_cb(
-    &attached_display,
-    global_filter!(
-      [wl_output::WlOutput, 2, move |output: Main<wl_output::WlOutput>, _: DispatchData| {
-        outputs2.borrow_mut().push(output);
-      }],
-      [zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1, 1, move |m: Main<zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1>, _: DispatchData| {
-        manager2.borrow_mut().replace(m);
-      }],
-      [wl_seat::WlSeat, 7, move |s: Main<wl_seat::WlSeat>, _: DispatchData| {
-        seat2.borrow_mut().replace(s);
-      }],
-      [ext_idle_notifier_v1::ExtIdleNotifierV1, 1, move |idle: Main<ext_idle_notifier_v1::ExtIdleNotifierV1>, _: DispatchData| {
-        idle2.borrow_mut().replace(idle);
-      }]
-    )
-  );
-
-  event_queue.sync_roundtrip(&mut (), |_, _, _| {}).unwrap();
-
-  if manager.borrow().is_none() {
+  if state.output_power_manager.is_none() {
     panic!("Error: zwlr_output_power_manager_v1 not supported by the Wayland compositor.");
   }
-  if idle.borrow().is_none() {
+  if state.idle_notifier.is_none() {
     panic!("Error: ext_idle_notifier_v1 not supported by the Wayland compositor.");
   }
 
-  let idle_timeout = idle.borrow().as_ref().unwrap().get_idle_notification(before, seat.borrow().as_ref().unwrap(),);
-  let idle = Rc::new(Cell::new(false));
-  let idle2 = idle.clone();
-  let resumed = Rc::new(Cell::new(false));
-  let resumed2 = resumed.clone();
-  idle_timeout.quick_assign(move |_, event, _|
-    match event {
-      ext_idle_notification_v1::Event::Idled => {
-        idle2.set(true);
-      },
-      ext_idle_notification_v1::Event::Resumed => {
-        resumed2.set(true);
-      },
-    }
-  );
+  state.idle_notifier.as_ref().unwrap().get_idle_notification(before, state.seat.as_ref().unwrap(), &qh, ());
 
-  while !idle.get() {
-    event_queue.dispatch(&mut (), |_, _, _| { /* we ignore unfiltered messages */ }).unwrap();
+  while !state.quit {
+    event_queue.blocking_dispatch(&mut state).unwrap();
   }
-  for o in &*outputs.borrow() {
-    set_mode(manager.borrow().as_ref().unwrap(), o, Mode::Off);
-  }
-
-  while !resumed.get() {
-    event_queue.dispatch(&mut (), |_, _, _| { /* we ignore unfiltered messages */ }).unwrap();
-  }
-  for o in &*outputs.borrow() {
-    set_mode(manager.borrow().as_ref().unwrap(), o, Mode::On);
-  }
-
-  event_queue.sync_roundtrip(&mut (), |_, _, _| {}).unwrap();
+  event_queue.roundtrip(&mut state).unwrap();
 }

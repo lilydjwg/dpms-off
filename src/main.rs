@@ -55,7 +55,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         _ => {}
       }
     } else if let wl_registry::Event::GlobalRemove { name } = event {
-      s.outputs.retain(|o| o.id().protocol_id() != name);
+      let (idx, o) = s.outputs.iter().enumerate().find(|&(_, o)| o.id().protocol_id() == name).unwrap();
+      o.release();
+      s.outputs.remove(idx);
     }
   }
 }

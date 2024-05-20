@@ -85,7 +85,7 @@ impl Dispatch<ext_idle_notification_v1::ExtIdleNotificationV1, ()> for State {
         s.set_mode(Mode::On, qh);
         s.quit = true;
       },
-      _ => {}
+      _ => unreachable!(),
     }
   }
 }

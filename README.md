@@ -1,4 +1,4 @@
-Same as `xset dpms force off`, but for Wayland.
+Same as `xset dpms force off`, but for Wayland. And it's written in Rust!
 
 It requires [zwlr_output_power_manager_v1](https://wayland.app/protocols/wlr-output-power-management-unstable-v1) and [org_kde_kwin_idle](https://wayland.app/protocols/kde-idle) support from the Wayland compositer. wlroots supports this.
 

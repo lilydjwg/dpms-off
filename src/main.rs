@@ -1,4 +1,4 @@
-use wayland_client::{Connection, Dispatch, QueueHandle, Proxy, delegate_noop};
+use wayland_client::{Connection, Dispatch, QueueHandle, delegate_noop};
 use wayland_client::protocol::{wl_registry, wl_output, wl_seat};
 use wayland_protocols::ext::idle_notify::v1::client::{ext_idle_notifier_v1, ext_idle_notification_v1};
 use wayland_protocols_wlr::output_power_management::v1::client::{zwlr_output_power_manager_v1, zwlr_output_power_v1::{self, Mode}};
@@ -19,7 +19,7 @@ fn main() {
 
 #[derive(Default)]
 struct State {
-  outputs: Vec<wl_output::WlOutput>,
+  outputs: Vec<(u32, wl_output::WlOutput)>,
   seat: Option<wl_seat::WlSeat>,
   output_power_manager: Option<zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1>,
   idle_notifier: Option<ext_idle_notifier_v1::ExtIdleNotifierV1>,
@@ -39,7 +39,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
       match &interface[..] {
         "wl_output" => {
           let output = registry.bind::<wl_output::WlOutput, _, _>(name, 2, qh, ());
-          s.outputs.push(output);
+          s.outputs.push((name, output));
         }
         "wl_seat" => {
           s.seat = Some(registry.bind::<wl_seat::WlSeat, _, _>(name, 7, qh, ()));
@@ -55,7 +55,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         _ => {}
       }
     } else if let wl_registry::Event::GlobalRemove { name } = event {
-      let (idx, o) = s.outputs.iter().enumerate().find(|&(_, o)| o.id().protocol_id() == name).unwrap();
+      let (idx, (_, o)) = s.outputs.iter().enumerate().find(|&(_, (oname, _))| *oname == name).unwrap();
       o.release();
       s.outputs.remove(idx);
     }
@@ -93,7 +93,7 @@ impl Dispatch<ext_idle_notification_v1::ExtIdleNotificationV1, ()> for State {
 impl State {
   fn set_mode(&self, mode: Mode, qh: &QueueHandle<Self>) {
     let m = self.output_power_manager.as_ref().unwrap();
-    for o in &self.outputs {
+    for (_, o) in &self.outputs {
       let p = m.get_output_power(o, qh, ());
       p.set_mode(mode);
       p.destroy();
